@@ -1,13 +1,28 @@
 """
 Flask web app for the URL summarizer.
-Serves a clean front-end and calls the existing summarize() function
-from Calling.py when the user submits a URL.
+
+Serves the front-end and exposes POST /api/summarize which calls the
+OpenAI-backed summarize() helper. Known error modes are mapped to
+appropriate HTTP status codes with clean user-facing messages; anything
+unexpected is logged server-side and returns a generic 500.
 """
 
-from flask import Flask, render_template, request, jsonify
+import logging
+
+from flask import Flask, jsonify, render_template, request
+
 from Calling import summarize
+from scraper import ScraperError
+
+MAX_URL_LENGTH = 2048
 
 app = Flask(__name__)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger("summarizer")
 
 
 @app.route("/")
@@ -22,16 +37,34 @@ def api_summarize():
 
     if not url:
         return jsonify({"error": "Please provide a URL."}), 400
+    if len(url) > MAX_URL_LENGTH:
+        return jsonify({"error": "That URL is too long."}), 400
 
-    # Lightweight URL validation — prepend https:// if scheme is missing
+    # Prepend scheme if the user pasted a bare domain.
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
     try:
         summary = summarize(url)
         return jsonify({"summary": summary, "url": url})
-    except Exception as e:
-        return jsonify({"error": f"Something went wrong: {e}"}), 500
+
+    except ScraperError as e:
+        # Known fetch failure — the message is already user-friendly.
+        logger.warning("Scrape failed for %s: %s", url, e)
+        return jsonify({"error": str(e)}), 502
+
+    except RuntimeError as e:
+        # Missing config (e.g. OPENAI_API_KEY).
+        logger.error("Configuration error: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+    except Exception:
+        # Anything else — don't leak internals to the client.
+        logger.exception("Unexpected error summarizing %s", url)
+        return (
+            jsonify({"error": "Something went wrong on our end. Please try again."}),
+            500,
+        )
 
 
 if __name__ == "__main__":
