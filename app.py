@@ -11,10 +11,12 @@ import logging
 
 from flask import Flask, jsonify, render_template, request
 
-from Calling import summarize
+from Calling import DEFAULT_LENGTH, DEFAULT_TONE, LENGTH_INSTRUCTIONS, TONE_PROMPTS, summarize
 from scraper import ScraperError
 
 MAX_URL_LENGTH = 2048
+ALLOWED_TONES = set(TONE_PROMPTS.keys())
+ALLOWED_LENGTHS = set(LENGTH_INSTRUCTIONS.keys())
 
 app = Flask(__name__)
 
@@ -44,9 +46,24 @@ def api_summarize():
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
+    # Validate tone/length against allowlists — fall back to defaults for
+    # missing or unknown values rather than failing the request.
+    tone = (data.get("tone") or DEFAULT_TONE).lower()
+    if tone not in ALLOWED_TONES:
+        tone = DEFAULT_TONE
+
+    length = (data.get("length") or DEFAULT_LENGTH).lower()
+    if length not in ALLOWED_LENGTHS:
+        length = DEFAULT_LENGTH
+
     try:
-        summary = summarize(url)
-        return jsonify({"summary": summary, "url": url})
+        summary = summarize(url, tone=tone, length=length)
+        return jsonify({
+            "summary": summary,
+            "url": url,
+            "tone": tone,
+            "length": length,
+        })
 
     except ScraperError as e:
         # Known fetch failure — the message is already user-friendly.
